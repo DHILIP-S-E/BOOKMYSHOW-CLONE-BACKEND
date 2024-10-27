@@ -29,21 +29,20 @@ app.get("/movie/get-movies", async (req, res) => {
 app.get("/movie/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    console.log("Received request for movie ID:", id); // Log the requested ID
+    console.log("Received request for movie ID:", id);
 
-    // Check if the provided ID is a valid format (as string)
-    if (typeof id !== "string" || id.length !== 24) {
+    // Updated ID check
+    if (typeof id !== "string" || id.length < 1) {
       return res.status(400).json({ message: "Invalid movie ID format" });
     }
 
-    const client = await new MongoClient(URL).connect();
-    let db = client.db(DB_NAME);
-    let dbcollection = await db.collection(COLLECTION_NAME);
+    const client = new MongoClient(URL);
+    await client.connect();
+    const db = client.db(DB_NAME);
+    const collection = db.collection(COLLECTION_NAME);
 
-    console.log("Querying movie with ID:", id); // Log the query
-
-    // Querying by _id as a string
-    let movie = await dbcollection.findOne({ _id: id });
+    console.log("Querying movie with ID:", id);
+    let movie = await collection.findOne({ _id: id });
     await client.close();
 
     if (!movie) {
@@ -52,10 +51,11 @@ app.get("/movie/:id", async (req, res) => {
 
     res.json(movie);
   } catch (error) {
-    console.error("Error occurred:", error); // Log specific error
-    res.status(500).json({ message: error.message || "Something went wrong" }); // Return specific error message
+    console.error("Error occurred:", error);
+    res.status(500).json({ message: error.message || "Something went wrong" });
   }
 });
+
 app.post("/movie/book-movie", async (req, res) => {
   const bookingRequest = req.body;
 
@@ -72,15 +72,31 @@ app.post("/movie/book-movie", async (req, res) => {
       return res.status(400).json({ message: "Invalid seat count" });
   }
 
+  // Simple validation for email and phone number formats
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(bookingRequest.email)) {
+      return res.status(400).json({ message: "Invalid email format" });
+  }
+
+  const phoneRegex = /^\d{10}$/; // Adjust regex based on your phone number format requirements
+  if (!phoneRegex.test(bookingRequest.phoneNumber)) {
+      return res.status(400).json({ message: "Invalid phone number format" });
+  }
+
+  const client = new MongoClient(URL);
+  
   try {
-      const id = bookingRequest.movieId;
-      console.log("Received request for movie ID:", id); // Log the requested ID
-      if (typeof id !== "string" || id.length !== 24) {
-          return res.status(400).json({ message: "Invalid movie ID format" });
-      }
-      const client = await new MongoClient(URL).connect();
+      await client.connect();
       const db = client.db(DB_NAME);
       const collection = db.collection(COLLECTION_NAME);
+
+      const id = bookingRequest.movieId;
+      console.log("Received request for movie ID:", id);
+
+      // Check if the provided ID is a valid format
+      if (typeof id !== "string") {
+          return res.status(400).json({ message: "Invalid movie ID format" });
+      }
 
       // Find the movie
       console.log("Finding movie with ID:", bookingRequest.movieId);
@@ -88,7 +104,6 @@ app.post("/movie/book-movie", async (req, res) => {
       console.log("Found movie:", movie);
 
       if (!movie) {
-          await client.close();
           return res.status(404).json({ message: "Requested movie is not found" });
       }
 
@@ -97,13 +112,11 @@ app.post("/movie/book-movie", async (req, res) => {
       console.log("Found show:", show);
 
       if (!show) {
-          await client.close();
           return res.status(404).json({ message: "Show not found" });
       }
 
       // Check available seats
       if (parseInt(show.seats) < requestedSeat) {
-          await client.close();
           return res.status(400).json({ message: "Not enough seats available" });
       }
 
@@ -120,10 +133,11 @@ app.post("/movie/book-movie", async (req, res) => {
 
       const updatedResult = await collection.updateOne(
           { _id: id },
-          { $set: { [`shows.${date}.${showIndex}.seats`]: updateSeats }, $push: { [`shows.${date}.${showIndex}.bookings`]: userBooking } }
+          { 
+              $set: { [`shows.${date}.${showIndex}.seats`]: updateSeats }, 
+              $push: { [`shows.${date}.${showIndex}.bookings`]: userBooking } 
+          }
       );
-
-      await client.close();
 
       if (updatedResult.modifiedCount === 0) {
           return res.status(500).json({ message: "Failed to update" });
@@ -133,8 +147,11 @@ app.post("/movie/book-movie", async (req, res) => {
   } catch (error) {
       console.log(error);
       return res.status(500).json({ message: "Something went wrong" });
+  } finally {
+      await client.close(); // Ensure client closes in finally block
   }
 });
+
 
 app.listen(8000, () => {
   console.log("Server is running on port 8000");
